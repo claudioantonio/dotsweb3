@@ -12,7 +12,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "dots-engine": "github:claudioantonio/dots-engine#77d1c09a4b85c71f2c41dd439759709ecbe3b958"
+    "dots-engine": "0.1.0-alpha.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.7",
