@@ -1,0 +1,10 @@
+{
+  "name": "@dotsweb3/frontend",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Lobby, match board, and replay viewer for the dots game",
+  "scripts": {
+    "build": "echo \"framework not chosen yet\" && exit 0",
+    "dev": "echo \"framework not chosen yet\" && exit 0"
+  }
+}

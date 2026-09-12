@@ -1,0 +1,97 @@
+/**
+ * Cartesi Machine backend entrypoint (Rollups HTTP API — advance/inspect
+ * loop against the rollup server's /finish endpoint). This process owns
+ * session scheduling, matchmaking, and forfeit handling; all actual game
+ * rules are delegated to `dots-engine`, imported as a locked dependency —
+ * never copied source (see dots-engine's docs/PRD-v5.md §11).
+ */
+
+const rollupServer = process.env.ROLLUP_HTTP_SERVER_URL;
+if (!rollupServer) {
+    throw new Error("ROLLUP_HTTP_SERVER_URL is not set");
+}
+
+type RollupRequest = {
+    request_type: "advance_state" | "inspect_state";
+    data: {
+        metadata?: {
+            msg_sender: string;
+            timestamp: number;
+            input_index: number;
+        };
+        payload: string;
+    };
+};
+
+function hexToUtf8(hex: string): string {
+    return Buffer.from(hex.replace(/^0x/, ""), "hex").toString("utf8");
+}
+
+function utf8ToHex(text: string): string {
+    return "0x" + Buffer.from(text, "utf8").toString("hex");
+}
+
+async function report(payload: string): Promise<void> {
+    await fetch(`${rollupServer}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payload: utf8ToHex(payload) }),
+    });
+}
+
+/**
+ * Handles a game input: joinQueue, leaveQueue, move, claimForfeit,
+ * scheduleSession. See dots-engine's docs/TODO.md §3-7 for the state
+ * machine this must implement; nothing here is built out yet.
+ */
+async function handleAdvance(data: RollupRequest["data"]): Promise<"accept" | "reject"> {
+    const { metadata, payload } = data;
+    const body = JSON.parse(hexToUtf8(payload));
+    console.log("advance_state", { metadata, body });
+
+    // TODO: route body.type to session/queue/move/forfeit handling,
+    // using dots-engine's Dots class for all rules and the move log.
+
+    await report(`received: ${JSON.stringify(body)}`);
+    return "accept";
+}
+
+/**
+ * Handles a read-only query (state, queue position, session window,
+ * history) per dots-engine's docs/PRD-v5.md F9. Nothing here is built
+ * out yet.
+ */
+async function handleInspect(data: RollupRequest["data"]): Promise<"accept" | "reject"> {
+    const { payload } = data;
+    const query = hexToUtf8(payload);
+    console.log("inspect_state", { query });
+
+    await report(`no handler for query: ${query}`);
+    return "accept";
+}
+
+async function main(): Promise<void> {
+    let status: "accept" | "reject" = "accept";
+
+    for (;;) {
+        const finishResponse = await fetch(`${rollupServer}/finish`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status }),
+        });
+
+        if (finishResponse.status === 202) {
+            console.log("no pending rollup request, retrying");
+            continue;
+        }
+
+        const rollupRequest = (await finishResponse.json()) as RollupRequest;
+
+        status =
+            rollupRequest.request_type === "advance_state"
+                ? await handleAdvance(rollupRequest.data)
+                : await handleInspect(rollupRequest.data);
+    }
+}
+
+main();
