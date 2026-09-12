@@ -11,17 +11,25 @@ if (!rollupServer) {
     throw new Error("ROLLUP_HTTP_SERVER_URL is not set");
 }
 
-type RollupRequest = {
-    request_type: "advance_state" | "inspect_state";
-    data: {
-        metadata?: {
-            msg_sender: string;
-            timestamp: number;
-            input_index: number;
-        };
-        payload: string;
-    };
-};
+// Shapes below match the Rollup HTTP API's OpenAPI spec
+// (github.com/cartesi/openapi-interfaces, rollup.yaml) as of Rollups 2.0.
+// Notably: there is no plain `timestamp` field — it's `block_timestamp`, in
+// *milliseconds* — and inspect requests carry no metadata at all.
+
+interface AdvanceMetadata {
+    chain_id: number;
+    app_contract: string;
+    msg_sender: string;
+    input_index: number;
+    block_number: number;
+    /** Unix timestamp of the block, in milliseconds. */
+    block_timestamp: number;
+    prev_randao: string;
+}
+
+type RollupRequest =
+    | { request_type: "advance_state"; data: { metadata: AdvanceMetadata; payload: string } }
+    | { request_type: "inspect_state"; data: { payload: string } };
 
 function hexToUtf8(hex: string): string {
     return Buffer.from(hex.replace(/^0x/, ""), "hex").toString("utf8");
@@ -44,13 +52,16 @@ async function report(payload: string): Promise<void> {
  * scheduleSession. See dots-engine's docs/TODO.md §3-7 for the state
  * machine this must implement; nothing here is built out yet.
  */
-async function handleAdvance(data: RollupRequest["data"]): Promise<"accept" | "reject"> {
+async function handleAdvance(data: { metadata: AdvanceMetadata; payload: string }): Promise<"accept" | "reject"> {
     const { metadata, payload } = data;
     const body = JSON.parse(hexToUtf8(payload));
     console.log("advance_state", { metadata, body });
 
-    // TODO: route body.type to session/queue/move/forfeit handling,
-    // using dots-engine's Dots class for all rules and the move log.
+    // TODO: route body.type to session/queue/move/forfeit handling, using
+    // dots-engine's Dots class for all rules and the move log. Any timing
+    // decision (forfeit deadlines, session windows) must use
+    // metadata.block_timestamp — never Date.now() — per the engine's
+    // determinism rules; convert from milliseconds as needed.
 
     await report(`received: ${JSON.stringify(body)}`);
     return "accept";
@@ -59,15 +70,15 @@ async function handleAdvance(data: RollupRequest["data"]): Promise<"accept" | "r
 /**
  * Handles a read-only query (state, queue position, session window,
  * history) per dots-engine's docs/PRD-v5.md F9. Nothing here is built
- * out yet.
+ * out yet. Inspect requests carry no metadata, and the Rollup HTTP Server
+ * ignores whatever status /finish is next called with after one.
  */
-async function handleInspect(data: RollupRequest["data"]): Promise<"accept" | "reject"> {
+async function handleInspect(data: { payload: string }): Promise<void> {
     const { payload } = data;
     const query = hexToUtf8(payload);
     console.log("inspect_state", { query });
 
     await report(`no handler for query: ${query}`);
-    return "accept";
 }
 
 async function main(): Promise<void> {
@@ -87,10 +98,12 @@ async function main(): Promise<void> {
 
         const rollupRequest = (await finishResponse.json()) as RollupRequest;
 
-        status =
-            rollupRequest.request_type === "advance_state"
-                ? await handleAdvance(rollupRequest.data)
-                : await handleInspect(rollupRequest.data);
+        if (rollupRequest.request_type === "advance_state") {
+            status = await handleAdvance(rollupRequest.data);
+        } else {
+            await handleInspect(rollupRequest.data);
+            status = "accept";
+        }
     }
 }
 
