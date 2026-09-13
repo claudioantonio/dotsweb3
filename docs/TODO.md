@@ -1,91 +1,152 @@
-# TODO — engine tasks for v1 (Session #1)
+# TODO — implementation roadmap (Session #1)
 
-Scope: this package only — the game engine consumed by both the Cartesi Machine
-entrypoint and the browser replay. Source of truth: [PRD-v5](docs/PRD-v5.md)
-(F-numbers) and its [feasibility assessment](docs/PRD-v5-feasibility-assessment.md).
-Tables are ordered by priority; items build on the ones before them.
+Scope: this repo (`packages/machine` + `packages/frontend`). Product spec:
+[PRD-v5](./PRD-v5.md) (F-numbers). Architecture: [context](./context.md).
 
-## 1. Groundwork
+Game **rules** (turns, scoring, hashes, forfeit *eligibility*) live in
+[`dots-engine`](https://github.com/claudioantonio/dots-engine) — implement
+them there, then bump the pin here. Do not copy or reimplement engine source.
 
-|Status| Task | Complexity |
-|---|---|---|
-|[x]| Establish determinism ground rules as lint/test guards before new code lands: no `Date.now` / `Math.random`, integer-only math, stable iteration order in anything feeding a hash or winner, all timing taken from a `timestamp` parameter (input metadata), same-block ties resolved by input order. | Low |
-|[x]| Normalize all addresses to lowercase at every engine ingress (Cartesi supplies lowercase `msg_sender`; wallets supply EIP-55 — mixed casing forks replays). | Low |
+```
+wallet tx  →  InputBox.addInput (OP Sepolia)
+           →  Cartesi node
+           →  machine advance_state  (dots-engine + session/queue/forfeit)
+           →  notices / reports
 
-## 2. Move log (replaces `playHistory`)
+frontend reads  →  inspect (F9) + node GraphQL/JSON notices
+replay (F13)    →  same locked dots-engine version as the machine
+```
 
-|Status| Task | Complexity |
-|---|---|---|
-|[x]| Replace `playHistory: Edge[]` with a full move record `{matchId, moveIndex, edge, submitter, squaresClosed, turnAfter, timestamp}` (F6). Design it once: it is simultaneously the per-move notice payload and the replay input. | Medium |
+Stack: Cartesi Rollups SDK v2, React, Chakra UI. Phases are ordered; later
+ones assume earlier ones.
 
-## 3. Turn machine (§6.3–6.4)
+## Already here
 
-|Status| Task | Complexity |
-|---|---|---|
-| [x] | Strict 1v1 alternation with turn check in move validation (reject out-of-turn with a distinct error). | Low |
-| [x] | **Extra move on close**: closing 1–2 squares keeps the turn (resolves the old TODO item — PRD-v5 §6.4 made the decision: adopt it). | Medium |
-|[x]| Per-turn chain counter with per-player match maxima for king-of-the-chain (§6). Update the max on every increment, not on turn change — the final move of a match never flips the turn. | Medium |
+- [x] Monorepo workspaces (`@dotsweb3/machine`, `@dotsweb3/frontend`)
+- [x] Machine `/finish` advance/inspect loop (Rollups 2.0 shapes:
+      `block_timestamp` in ms, inspect has no metadata)
+- [x] Determinism lint on the machine package
 
-## 4. Forfeit machine (F4, §6.5)
+## Engine gate (dots-engine, not this repo)
 
-| Task | Complexity |
-|---|---|
-| `claimForfeit` resolved lazily against input-metadata timestamps: valid iff `now > forfeitDeadline` and claimant is the waiting player. | Medium |
-| `forfeitDeadline` = last move + `TURN_TIMEOUT`; first move of a match gets `FIRST_MOVE_GRACE` (= 2 × `TURN_TIMEOUT`) from the pairing timestamp. | Medium |
-| Enumerated rejection reasons: `NO_SUCH_MATCH`, `NOT_A_PLAYER`, `NOT_THE_WAITING_PLAYER`, `DEADLINE_NOT_ELAPSED`. | Low |
-| Flag zero-move forfeits (loser never played) in the match result — stat layer excludes them. | Low |
-| Rejected inputs must not touch `forfeitDeadline` (no stalling by spamming invalid moves). | Low |
+Machine routing and browser replay need a pin that already has: move log
+(F6), turn machine + extra-move-on-close, forfeit/session APIs the wrapper
+will call, `MatchEnded` + `finalBoardHash` + `replay()`, dual ESM+CJS.
+Track that work in the engine repo. Until it ships, phases 2–3 can stub
+against the current pin; phases 5–6 cannot ship.
 
-## 5. Match orchestrator (F1–F2, §5) — biggest new piece
+Keep `machine` and `frontend` on the **identical** engine version.
 
-| Task | Complexity |
-|---|---|
-| FIFO matchmaking queue: `joinQueue` / `leaveQueue`, reject double-join and join-while-in-live-match (one live match per address). | High |
-| Pair on second join: create match, first joiner moves first, emit `MatchStarted {matchId, players, firstMover, timestamp}`. | Medium |
-| Session window state from `scheduleSession {sessionStart, sessionEnd, gridSize?, turnTimeout?}`: joins only inside the window and before `sessionEnd − LAST_MATCH_CUTOFF`; pairing halts at cutoff; live matches always play to completion. | Medium |
-| Abandoned sweep on `scheduleSession`: close only matches idle > `SWEEP_IDLE` (= 10 × `TURN_TIMEOUT`) as `abandoned` (winner null), clear stale queue entries — never touch an active match. | High |
-| Multiple concurrent match instances: `matchId → match` map; all constants (`gridSize`, `turnTimeout`) per session, not global. | High |
+---
 
-## 6. Match result (F5)
+## Phase 0 — Walking skeleton (SDK v2)
 
-| Task | Complexity |
-|---|---|
-| `MatchEnded` payload: `{matchId, sessionId, players, winner, loser, squares, forfeit, zeroMoveForfeit, abandoned, durationSeconds, longestChain: {both players' maxima}, closingMove, finalBoardHash, engineVersion}`. | Medium |
-| Explicit nullability: `winner`/`loser` null iff `abandoned`; `closingMove` null on forfeit and abandoned endings. | Low |
-| In-engine tie-break for per-match `longestChain` when both players share the max (earliest achieved, per the F7 rule applied per match). | Low |
-| Win condition: all 25 squares claimed → higher count wins (odd square count ⇒ no ties), or win by forfeit. | Low |
+Prove InputBox → node → machine → notice on OP Sepolia before building
+game state. Launch prerequisite: node confirmation depth near-`latest`
+(a `finalized` setting would add minutes per move). Measure p95
+input→notice latency; `TURN_TIMEOUT` (~60s) is validated against that
+number (tunable later via F2).
 
-## 7. Board hash + replay verification (§11, F13's engine half)
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | Cartesi CLI / SDK v2 app wiring so `packages/machine` builds and runs inside the machine (`cartesi build` / `cartesi run`) | — | Medium |
+| [ ] | Deploy the skeleton application on OP Sepolia; record InputBox + app contract addresses | — | Medium |
+| [ ] | Echo path: signed `addInput` → `advance_state` → notice/report visible from the node API | — | Medium |
+| [ ] | Measure input→notice latency and confirmation depth; write the numbers down for timeout tuning | — | Low |
 
-| Task | Complexity |
-|---|---|
-| Canonical board encoding: fixed edge ordering derived from coordinates, square owners by id — never `JSON.stringify` of the live object graph (Squares share Edge instances). | Medium |
-| `finalBoardHash` = keccak256 over the canonical encoding, via `@noble/hashes` or viem — pure JS, byte-identical in machine and browser; no `node:crypto`, nothing WASM-optional. | Low |
-| Stamp `engineVersion` (package version) into `MatchEnded`. | Low |
-| Export a headless verify API: `replay(moveLog) → finalBoardHash` so any consumer can check a match from its history alone. | Medium |
+## Phase 1 — Machine wrapper (F8)
 
-## 8. Test suite
+Route payloads, tag sender, map engine throws to Cartesi reject + report.
+All timing from `metadata.block_timestamp` (convert ms as needed).
+Addresses lowercased at ingress. Same-block order = `input_index`.
 
-| Task | Complexity |
-|---|---|
-| Turn/extra-move/chain paths, exhaustively (this is where replay bugs live). | Medium |
-| Forfeit races: late move vs. claim in same block (input-order resolution) and adjacent blocks; claim by wrong party; claim before deadline; first-move grace. | High |
-| Queue edge cases: leave then re-join, pair ordering, cutoff behavior, sweep criterion (idle vs. active overtime match), one-live-match lock. | High |
-| Determinism proof: run a full generated match log through `replay()` twice (fresh instances) → identical `finalBoardHash`; property-style tests over random valid logs. | Medium |
-| Table-driven winner/forfeit/abandoned result tests (the old `getWinner()` tie quirks must not survive the rewrite). | Low |
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | Decode hex payload; dispatch `joinQueue` / `leaveQueue` / move / `claimForfeit` / `scheduleSession` | F8 | Medium |
+| [ ] | `msg_sender` + `block_timestamp` + `input_index` plumbed into every handler | F8 | Low |
+| [ ] | Engine throws → `/finish` `reject` + machine-readable rejection **report** (reason codes F3/F4) | F3, F8 | Medium |
+| [ ] | Notices for accepted state changes (`MatchStarted`, per-move F6, `MatchEnded`) | F1, F5, F6 | Medium |
+| [ ] | Rejected inputs do not mutate session/queue/match state (no deadline stall via spam) | F4 | Low |
 
-## 9. Packaging
+## Phase 2 — Session, queue, matches (F1–F2, F5–F6)
 
-| Task | Complexity |
-|---|---|
-| Dual ESM+CJS build (`exports` map with `import`/`require` conditions; currently CJS-only) — required before the browser replay consumes the package. | Medium |
-| No Node-only imports, no DOM imports anywhere in the engine. | Low |
-| Publish; the Cartesi Machine entrypoint and the frontend must consume the identical locked version — never a copied source tree. | Low |
+Orchestration in the machine; board/turn/hash via `dots-engine`.
 
-## Done
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | `scheduleSession {sessionStart, sessionEnd, gridSize?, turnTimeout?}` from owner; per-session constants, not globals | F2 | Medium |
+| [ ] | FIFO `joinQueue` / `leaveQueue`; reject double-join and join-while-in-live-match | F1 | High |
+| [ ] | Pair on second join; first joiner moves first; emit `MatchStarted {matchId, players, firstMover, timestamp}` | F1 | Medium |
+| [ ] | Cutoff: no new matches after `sessionEnd − LAST_MATCH_CUTOFF`; live matches always finish | F1, §5.3 | Medium |
+| [ ] | `matchId → match` map; concurrent boards | F1 | High |
+| [ ] | Apply moves through the engine; emit F6 notice = move log record | F3, F6 | Medium |
+| [ ] | `claimForfeit` against metadata time; `FIRST_MOVE_GRACE` / `TURN_TIMEOUT`; F4 reason codes | F4 | Medium |
+| [ ] | On `scheduleSession`, sweep only matches idle > `SWEEP_IDLE` as abandoned; clear stale queue; never touch an active match | F2 | High |
+| [ ] | Emit `MatchEnded` with explicit nullability, both chain maxima, `finalBoardHash`, `engineVersion` | F5 | Medium |
 
-- [x] Remove `console.log` from `Grid.createSquares` ([src/Grid.ts](src/Grid.ts):42,49) — the engine runs inside the Cartesi Machine, per input.
-- [x] Fix the order-dependent early `break` in `getAvailableSquaresbyId` ([src/Grid.ts](src/Grid.ts):200) — it silently depends on `relatedSquareId` being ascending.
-- [x] **Signal when a move targets an already-drawn edge** — `play` now throws (commit `ac4a433`).
-- [x] ~~Decide whether to adopt extra-turn-on-close~~ — decided by PRD-v5 §6.4: adopted; implementation tracked above.
+## Phase 3 — Inspect (F9)
 
+Read-only; inspect has **no** metadata. Prefer GraphQL/JSON notices for
+deltas; inspect for current board/queue/session.
+
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | `state(matchId?)` — board, turn, **resolved** forfeit deadline (not the raw constant) | F9 | Medium |
+| [ ] | `queue()` — positions | F9 | Low |
+| [ ] | `session()` — window, cutoff, live match list | F9 | Medium |
+| [ ] | `history(matchId)` — F6 records for replay | F9 | Medium |
+
+## Phase 4 — Frontend shell (React + Chakra)
+
+No game screens yet; wallet can send the same payloads the machine already
+accepts.
+
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [x] | Vite + React + Chakra UI app in `packages/frontend` (replace the placeholder) | — | Medium |
+| [ ] | Wallet connect (wagmi/viem) on OP Sepolia; `InputBox.addInput` helper | F8 | Medium |
+| [ ] | Node clients: inspect HTTP + notice polling (cursor-based, ~2–3s; GraphQL has no subscriptions) | §11 | Medium |
+| [x] | Pin `dots-engine` to the **same** version as `packages/machine` | F13 | Low |
+
+## Phase 5 — Playable match (F10–F12)
+
+Launch blockers for actually playing.
+
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | Queue: join / leave / position; auto-redirect on `MatchStarted` | F11 | Medium |
+| [ ] | Board: edges, owned squares, score, turn, opponent address/ENS | F10 | High |
+| [ ] | Forfeit countdown from inspect’s resolved deadline; prominent **Claim forfeit** when it elapses | F10 | Medium |
+| [ ] | Submit move: optimistic pending badge by `moveIndex`; disable while own tx pending (nonce) | F12 | Medium |
+| [ ] | Rejection UX: receipt input index → rejection report; forfeit-race copy (“move arrived after the claim”) | F12 | High |
+| [ ] | Post-match result screen + re-queue | F11 | Low |
+
+## Phase 6 — Lobby, pre-commit, replay (F13–F15)
+
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | Lobby: countdown, live-status banner, last session stat sheet + replay links | F14 | Medium |
+| [ ] | During session: live match list (spectate via notice stream) | F14 | Medium |
+| [ ] | Pre-commit sign-up, tally, slot poll (Supabase-class; F15) | F15 | Medium |
+| [ ] | Wallet-readiness: faucet link + “send one test input” ✓ | F15, §12 | Medium |
+| [ ] | Thin replay: load `history` → engine `replay()` → auto-play → **hash matches on-chain ✓** (no scrubber) | F13 | Medium |
+| [ ] | Off-chain session stat script from F5/F6 notices (F7 tie-breaks: fastest win earliest; king of the chain earliest then lowest address) | F7 | Medium |
+
+## Phase 7 — Dry run, then Session #1
+
+| Status | Task | F | Complexity |
+|---|---|---|---|
+| [ ] | Node hosting workstream named and running for a session window | §11 | Medium |
+| [ ] | Dry-run with ~5 wallets: hosting, inspect contention, GraphQL lag | §7 | High |
+| [ ] | Retune `TURN_TIMEOUT` / grid via F2 if p95 latency disagrees with ~60s | §11 | Low |
+| [ ] | Go/no-go: ≥16 pre-commits 24h out; Session #1 | §5.6 | — |
+
+F13 must exist before Session #1 — it is how the primary metric (zero
+hash divergence) is measured.
+
+---
+
+## Out of this roadmap (PRD non-goals / V6+)
+
+No money, AA/gasless, Discord, brackets, rematch/challenge links, replay
+scrubber, mainnet, mobile-first, NFT. See PRD §9 and §15.
