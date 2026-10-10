@@ -1,28 +1,40 @@
-import type { Dots, Coord } from "dots-engine";
+import type { Coord } from "@dotsweb3/protocol";
+import type { BoardView } from "../engine-adapter";
+import { SEAT_COLORS } from "../theme";
 
 const CELL = 64;
 const PAD = 32;
 const DOT_RADIUS = 7;
 const SELECTED_RADIUS = 10;
 
-const PLAYER_COLORS: Record<string, string> = {
-  "player-a": "#2C7A7B",
-  "player-b": "#C05621",
-};
-
-function isSameDot(a: Coord | null, b: Coord): boolean {
-  return a !== null && a[0] === b[0] && a[1] === b[1];
+function isSameDot(a: Coord | null | undefined, b: Coord): boolean {
+  return !!a && a[0] === b[0] && a[1] === b[1];
 }
 
-interface DotGridProps {
-  match: Dots;
-  selected: Coord | null;
-  onDotClick: (dot: Coord) => void;
+export interface DotGridProps {
+  board: BoardView;
+  /** Seat order: players[0] is teal, players[1] orange. */
+  players: readonly [string, string];
+  selected?: Coord | null;
+  /** Omit for a read-only board (spectate, replay, result thumbnail). */
+  onDotClick?: (dot: Coord) => void;
+  /** Optimistic edge, drawn dashed with a "pending" badge (F12). */
+  pending?: [Coord, Coord] | null;
+  /** Edge to pulse briefly (last confirmed move). */
+  highlightMoveIndex?: number | null;
+  /** Scale factor for thumbnails. */
+  scale?: number;
 }
 
-export function DotGrid({ match, selected, onDotClick }: DotGridProps) {
-  const size = match.grid.size;
+export function DotGrid({ board, players, selected, onDotClick, pending, highlightMoveIndex, scale = 1 }: DotGridProps) {
+  const size = board.size;
   const svgSize = PAD * 2 + (size - 1) * CELL;
+  const interactive = !!onDotClick;
+  const colorOf = (who: string) => {
+    const seat = players.findIndex((p) => p.toLowerCase() === who.toLowerCase());
+    return seat >= 0 ? SEAT_COLORS[seat] : "#A0AEC0";
+  };
+  const at = (v: number) => PAD + v * CELL;
 
   const neighbors: Coord[] = selected
     ? (
@@ -37,46 +49,72 @@ export function DotGrid({ match, selected, onDotClick }: DotGridProps) {
 
   const dots: Coord[] = [];
   for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      dots.push([x, y]);
-    }
+    for (let y = 0; y < size; y++) dots.push([x, y]);
   }
 
   return (
-    <svg width={svgSize} height={svgSize} role="img" aria-label="Dots board">
-      <rect x={0} y={0} width={svgSize} height={svgSize} fill="#F7FAFC" />
+    <svg
+      width={svgSize * scale}
+      height={svgSize * scale}
+      viewBox={`0 0 ${svgSize} ${svgSize}`}
+      role="img"
+      aria-label="Dots board"
+    >
+      <style>{`@keyframes dots-pulse { from { opacity: .35 } to { opacity: 1 } } .dots-pulse { animation: dots-pulse .5s ease-in-out 3 alternate }`}</style>
+      <rect x={0} y={0} width={svgSize} height={svgSize} fill="#1a1b1e" rx={8} />
 
-      {match.grid.getSquares().map((square) => {
-        if (!square.hasOwner()) return null;
-        const [row, col] = match.grid.getSquarePosition(square.id);
-        return (
-          <rect
-            key={square.id}
-            x={PAD + col * CELL}
-            y={PAD + row * CELL}
-            width={CELL}
-            height={CELL}
-            fill={PLAYER_COLORS[square.owner] ?? "#A0AEC0"}
-            opacity={0.35}
-          />
-        );
-      })}
+      {board.squares.map((sq) => (
+        <rect
+          key={`${sq.row},${sq.col}`}
+          x={at(sq.col)}
+          y={at(sq.row)}
+          width={CELL}
+          height={CELL}
+          fill={colorOf(sq.owner)}
+          opacity={0.35}
+        />
+      ))}
 
-      {match.moveLog.map((move) => {
-        const [[x1, y1], [x2, y2]] = move.edge;
+      {board.edges.map((e) => {
+        const [[x1, y1], [x2, y2]] = e.edge;
         return (
           <line
-            key={move.moveIndex}
-            x1={PAD + x1 * CELL}
-            y1={PAD + y1 * CELL}
-            x2={PAD + x2 * CELL}
-            y2={PAD + y2 * CELL}
-            stroke={PLAYER_COLORS[move.submitter] ?? "#2D3748"}
+            key={e.moveIndex}
+            className={e.moveIndex === highlightMoveIndex ? "dots-pulse" : undefined}
+            x1={at(x1)}
+            y1={at(y1)}
+            x2={at(x2)}
+            y2={at(y2)}
+            stroke={colorOf(e.owner)}
             strokeWidth={4}
             strokeLinecap="round"
           />
         );
       })}
+
+      {pending && (
+        <g data-testid="pending-edge">
+          <line
+            x1={at(pending[0][0])}
+            y1={at(pending[0][1])}
+            x2={at(pending[1][0])}
+            y2={at(pending[1][1])}
+            stroke="#fab005"
+            strokeWidth={4}
+            strokeDasharray="6 6"
+            strokeLinecap="round"
+          />
+          <text
+            x={(at(pending[0][0]) + at(pending[1][0])) / 2}
+            y={(at(pending[0][1]) + at(pending[1][1])) / 2 - 10}
+            textAnchor="middle"
+            fontSize={11}
+            fill="#fab005"
+          >
+            pending
+          </text>
+        </g>
+      )}
 
       {dots.map((dot) => {
         const isSelected = isSameDot(selected, dot);
@@ -84,12 +122,12 @@ export function DotGrid({ match, selected, onDotClick }: DotGridProps) {
         return (
           <circle
             key={`${dot[0]},${dot[1]}`}
-            cx={PAD + dot[0] * CELL}
-            cy={PAD + dot[1] * CELL}
+            cx={at(dot[0])}
+            cy={at(dot[1])}
             r={isSelected ? SELECTED_RADIUS : DOT_RADIUS}
-            fill={isSelected ? "#3182CE" : isNeighbor ? "#90CDF4" : "#2D3748"}
-            style={{ cursor: "pointer" }}
-            onClick={() => onDotClick(dot)}
+            fill={isSelected ? "#15aabf" : isNeighbor ? "#66d9e8" : "#c1c2c5"}
+            style={interactive ? { cursor: "pointer" } : undefined}
+            onClick={interactive ? () => onDotClick(dot) : undefined}
           />
         );
       })}
