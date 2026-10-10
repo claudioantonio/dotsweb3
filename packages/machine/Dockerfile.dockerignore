@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+**/.cartesi
+packages/frontend
+.git
+.claude
+docs
