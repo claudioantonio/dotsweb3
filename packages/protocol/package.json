@@ -1,0 +1,24 @@
+{
+  "name": "@dotsweb3/protocol",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Wire contract between @dotsweb3/machine and @dotsweb3/frontend: input/notice/report/inspect types and pure JSON-hex codecs. No game rules, no runtime dependencies.",
+  "main": "dist/cjs/index.js",
+  "types": "dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/cjs/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json && node -e \"require('fs').writeFileSync('dist/esm/package.json', '{\\\"type\\\":\\\"module\\\"}')\""
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}
