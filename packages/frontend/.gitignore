@@ -1,0 +1,4 @@
+# Per-mode env files carry deployment-specific addresses/URLs; only the example is committed.
+.env
+.env.*
+!.env.example
