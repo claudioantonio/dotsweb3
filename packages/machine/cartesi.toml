@@ -1,0 +1,7 @@
+# cartesi CLI 2.0.0-alpha config. Run `cartesi build` / `cartesi run` from
+# packages/machine. The Docker context is the repo root (protocol workspace +
+# root lockfile are needed).
+[drives.root]
+builder = "docker"
+dockerfile = "Dockerfile"
+context = "../.."

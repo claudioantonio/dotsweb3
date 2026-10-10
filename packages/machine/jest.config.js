@@ -2,5 +2,9 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  passWithNoTests: true,
+  roots: ['<rootDir>/test'],
+  // Tests run against protocol's source, so no prior build is needed.
+  moduleNameMapper: {
+    '^@dotsweb3/protocol$': '<rootDir>/../protocol/src/index.ts',
+  },
 };
