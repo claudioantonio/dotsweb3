@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "workspaces": [
-    "packages/*"
+    "packages/protocol",
+    "packages/machine",
+    "packages/frontend"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
