@@ -32,7 +32,7 @@ must always match.
   scheduling, matchmaking queue, forfeit handling. Talks to the rollup
   server's HTTP API; calls into `dots-engine` for every rule decision.
 - **`packages/frontend`** (here) — lobby, queue UI, match board, and the
-  browser replay viewer. Reads machine state only through the Cartesi node's
+  browser replay viewer (UX spec and screen designs: [ux-plan.md](./ux-plan.md)). Reads machine state only through the Cartesi node's
   inspect/GraphQL APIs (F9), never by reaching into `packages/machine`
   internals.
 
